@@ -22,6 +22,25 @@ angular.module('mm.acl').provider('AclService', [
       };
     }
 
+    /**
+     * each implementation (based on underscore, http://underscorejs.org/docs/underscore.html)
+     */
+    function each(obj, iteratee) {
+      var i, length, key;
+      if (typeof obj.length === 'number' && obj.length >= 0) {
+        for (i = 0, length = obj.length; i < length; i++) {
+          iteratee(obj[i], i, obj);
+        }
+      } else {
+        for (key in obj) {
+          if (obj.hasOwnProperty(key)) {
+            iteratee(obj[key], key, obj);
+          }
+        }
+      }
+      return obj;
+    }
+
     var config = {
       storage: 'sessionStorage',
       storageKey: 'AclService'
@@ -192,13 +211,44 @@ angular.module('mm.acl').provider('AclService', [
      *    {
      *        guest: ['login'],
      *        user: ['logout', 'view_content'],
-     *        admin: ['logout', 'view_content', 'manage_users']
+     *        admin: {'logout':'any', 'content':'read', 'manage_users': ['read', 'create', 'delete', 'edit']}
      *    }
      *
      * @param abilities
      */
-    AclService.setAbilities = function (abilities) {
-      data.abilities = abilities;
+    AclService.setAbilities = function (abilitiesDefinition) {
+      var self = this;
+      data.abilities = {};
+      each(abilitiesDefinition, function(abilities, role){
+          self.setRoleAbilities(role, abilities);
+      });
+      save();
+    };
+
+    /**
+     * Set abilities for a given role (overwriting previous abilities)
+     *
+     * The abilities param should have a value of an array or object. The array or object
+     * should contain a list of all of the roles abilities.
+     *
+     * Example:
+     *
+     *    (admin, {'logout':'any', 'content':'read', 'manage_users': ['read', 'create', 'delete', 'edit']})
+     *
+     * @param role
+     * @param abilities
+     */
+    AclService.setRoleAbilities = function (role, abilities) {
+      var self = this;
+      data.abilities[role] = {};
+
+      if(typeof abilities === 'string') {
+        self.addAbility(role, abilities);
+      } else {
+        each(abilities, function(permissions, ability) {
+          self.addAbility(role, ability, permissions);
+        });
+      }
       save();
     };
 
@@ -208,11 +258,14 @@ angular.module('mm.acl').provider('AclService', [
      * @param role
      * @param ability
      */
-    AclService.addAbility = function (role, ability) {
+    AclService.addAbility = function (role, ability, permissions) {
       if (!data.abilities[role]) {
-        data.abilities[role] = [];
+        data.abilities[role] = {};
       }
-      data.abilities[role].push(ability);
+      if (!permissions) {
+        permissions = ['any'];
+      }
+      data.abilities[role][ability] = permissions;
       save();
     };
 
@@ -220,23 +273,65 @@ angular.module('mm.acl').provider('AclService', [
      * Does current user have permission to do something?
      *
      * @param ability
+     * @param perrmission
      * @returns {boolean}
      */
-    AclService.can = function (ability) {
-      var role, abilities;
-      // Loop through roles
-        var l = data.roles.length;
-      for (; l--;) {
-        // Grab the the current role
-        role = data.roles[l];
-        abilities = getRoleAbilities(role);
-        if (abilities.indexOf(ability) > -1) {
-          // Ability is in role abilities
+    AclService.can = function (ability, permission) {
+      // Helper function: calculates equivalencies between permissions
+      function getExpandedPermissions (permission) {
+        var perms = [];
+        switch (permission) {
+            case 'write':
+                perms = ['create', 'edit', 'delete'];
+                break;
+            case 'create':
+            case 'edit':
+            case 'delete':
+                perms = ['write'];
+                break;
+        }
+        perms.push(permission);
+        return perms;
+      }
+
+      // Helper function: checks if permissions fit into allowed ones
+      function checkPermissions(allowedPermissions, permissions) {
+        if(allowedPermissions.indexOf('none') > -1) {
+          return false;
+        }
+
+        if(allowedPermissions.indexOf('any') > -1 || allowedPermissions.length && permissions.indexOf('any') > -1) {
           return true;
         }
+
+        var permission;
+        var isValid = false;
+        each(permissions, function(permission) {
+          if(allowedPermissions.indexOf(permission) > -1) {
+            isValid = true;
+          }
+        });
+        return isValid;
       }
+
+      var role, abilities, i, length, expandedPermissions;
+      var canDoIt = false;
+
+      if(!permission) {
+        permission = 'any';
+      }
+
+      each(data.roles, function(role) {
+        abilities = getRoleAbilities(role);
+        expandedPermissions = getExpandedPermissions(permission);
+        if (abilities[ability] && checkPermissions(abilities[ability], expandedPermissions)) {
+          // Ability is in role abilities
+          canDoIt = true;
+        }
+      });
+
       // We made it here, so the ability wasn't found in attached roles
-      return false;
+      return canDoIt;
     };
 
     /**

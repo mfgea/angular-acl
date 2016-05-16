@@ -34,14 +34,16 @@ Setup the `AclService` in your app module's `run()` block.
 
 ```js
 app.run(['AclService', function (AclService) {
-  
+
   // Set the ACL data. Normally, you'd fetch this from an API or something.
   // The data should have the roles as the property names,
-  // with arrays listing their permissions as their value.
+  // with arrays listing their abilities as their value,
+  // or objects listing their abilities and permissions as their values
   var aclData = {
     guest: ['login'],
-    member: ['logout', 'view_content'],
-    admin: ['logout', 'view_content', 'manage_content']
+    member: {'logout': 'any', 'content': 'read' },
+    writer: {'logout': 'any', 'content': [ 'read', 'create' ] }
+    admin: ['logout', 'content']
   }
   AclService.setAbilities(aclData);
 
@@ -63,7 +65,7 @@ app.config(['$routeProvider', function ($routeProvider) {
     .when('/manage', {
       resolve : {
         'acl' : ['$q', 'AclService', function($q, AclService){
-          if(AclService.can('manage_content')){
+          if(AclService.can('content', 'write')){
             // Has proper permissions
             return true;
           } else {
@@ -76,7 +78,7 @@ app.config(['$routeProvider', function ($routeProvider) {
     .when('/content', {
       resolve : {
         'acl' : ['$q', 'AclService', function($q, AclService){
-          if(AclService.can('view_content')){
+          if(AclService.can('content', 'read')){
             // Has proper permissions
             return true;
           } else {
@@ -116,7 +118,7 @@ app.controller('DemoCtrl', ['$scope', 'AclService', function ($scope, AclService
 
 ```html
 <h1>{{ title }}</h1>
-<a ng-href="edit/{{ id }}" ng-show="can('manage_content')">Edit</a>
+<a ng-href="edit/{{ id }}" ng-show="can('content', 'write')">Edit</a>
 ```
 
 ---
@@ -183,11 +185,11 @@ app.run(['AclService', function (AclService) {
   // Attempt to load from web storage
   if (!AclService.resume()) {
     // Web storage record did not exist, we'll have to build it from scratch
-    
+
     // Get the user role, and add it to AclService
     var userRole = fetchUserRoleFromSomewhere();
     AclService.addRole(userRole);
-    
+
     // Get ACL data, and add it to AclService
     var aclData = fetchAclFromSomewhere();
     AclService.setAbilities(aclData);
@@ -257,20 +259,21 @@ Set the abilities object (overwriting previous abilities).
 
 | Param | Type | Details |
 | ----- | ---- | ------- |
-| `abilities` | object | Each property on the abilities object should be a role. Each role should have a value of an array. The array should contain a list of all of the role's abilities. |
+| `abilities` | object | Each property on the abilities object should be a role. Each role should have a value of an array or object. The array should contain a all of the role's abilities. The object should also contain atomic permission for the roles. |
 
 ###### Example
 
 ```js
 var abilities = {
   guest: ['login'],
-  user: ['logout', 'view_content'],
-  admin: ['logout', 'view_content', 'manage_content']
+  member: {'logout': 'any', 'content': 'read' },
+  writer: {'logout': 'any', 'content': [ 'read', 'create' ] }
+  admin: ['logout', 'content']
 }
 AclService.setAbilities(abilities);
 ```
 
-#### `AclService.addAbility(role, ability)`
+#### `AclService.addAbility(role, ability, [permissions])`
 
 Add an ability to a role
 
@@ -280,8 +283,14 @@ Add an ability to a role
 | ----- | ---- | ------- | ------- |
 | `role` | string | `"admin"` | The role label |
 | `ability` | string | `"create_users"` | The ability/permission label |
+| `permissions` | array/string | `["read", "write"]` or `"any"` | The allowed permissions for the ability |
 
-#### `AclService.can(ability)`
+The `permissions` parameter has some predefined values that are expanded. For example, if you include `write` as a permission, a user could `create`, `edit`, `delete` and `write`.
+
+It also allows custom parameters, for example `[ 'read', 'write', 'ban' ]`.
+
+
+#### `AclService.can(ability, permission)`
 
 Does current user have permission to do the given ability?
 
@@ -293,15 +302,21 @@ Does current user have permission to do the given ability?
 
 ```js
 // Setup some abilities
-AclService.addAbility('moderator', 'ban_users');
-AclService.addAbility('admin', 'create_users');
+AclService.addAbility('moderator', 'users', ['read', 'ban', 'unban']);
+AclService.addAbility('admin', 'users');
 
 // Add moderator role to the current user
 AclService.attachRole('moderator');
 
 // Check if the current user has these permissions
-AclService.can('ban_users'); // returns true
-AclService.can('create_users'); // returns false
+AclService.can('users', 'ban'); // returns true
+AclService.can('users', 'create'); // returns false
+
+// Add admin role to the current user
+AclService.attachRole('admin');
+
+// Check if the current user has these permissions
+AclService.can('users', 'create'); // returns true
 ```
 
 ---
